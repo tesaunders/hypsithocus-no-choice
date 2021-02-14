@@ -7,7 +7,7 @@ output:
   html_notebook: default
   pdf_document: default
 ---
-This notebook contains code used to analyse data from experiments with Hypsithocus hudsonae, an endemic New Zealand pentatomid species, and Trissolcus japonicus, a scelionid parasitoid proposed for release as a biological control agent against brown marmorated stink bug in New Zealand (should the stink bug establish). The underlying dataset is derived from experiments conducted by Saunders et al with H. hudsonae and T. japonicus, combined with data from experiments by Charles et al (2019) (https://dx.doi.org/10/ggrtkp). We (Saunders et al) conducted no-choice oviposition experiments under very similar conditions to Charles et al, so that we could eventually pool the data to look at differences in parasitoid emergence between different non-target New Zealand pentatomid species. 
+This notebook contains code used to analyse data from experiments with Hypsithocus hudsonae, an endemic New Zealand pentatomid species, and Trissolcus japonicus, a scelionid parasitoid proposed for release as a biological control agent against brown marmorated stink bug in New Zealand (should the stink bug establish). The underlying dataset is made up of data from experiments conducted by Saunders et al with H. hudsonae and T. japonicus, combined with data from experiments reported by Charles et al (2019) (https://dx.doi.org/10/ggrtkp). I conducted no-choice oviposition experiments under very similar conditions to Charles et al, so that we could eventually pool the data to look at differences in parasitoid emergence between different non-target New Zealand pentatomid species. 
 
 ```{r library, include=FALSE}
 library(tidyverse)
@@ -16,16 +16,18 @@ library(car)
 library(emmeans)
 library(lme4)
 library(boot)
-
-# Load data
-
-raw_data.df <- read_excel("hypsithocus_raw.xlsx", sheet = "combined_data")
 ```
 
 ```{r}
-# Summarise sample size and average eggs per mass for each pentatomid species x treatment
+# Load data
 
-pents_sum <- raw_data.df %>% 
+hyp.df <- read_excel("hypsithocus_raw.xlsx", sheet = "combined_data")
+```
+
+```{r}
+# Summary of sample size and avg eggs per mass for each pentatomid species x treatment
+
+pents_sum <- hyp.df %>% 
   group_by(species, treatment) %>% 
   summarise(
     egg_masses = n(),
@@ -36,7 +38,7 @@ pents_sum <- raw_data.df %>%
 ```{r}
 # Calculate a range of emergence-related variables, including average percent egg parasitism (the average proportion of eggs within each mass which gave rise to a wasp) and total mass acceptance (the proportion of masses from which at least one wasp emerged)
 
-emerge_avg <- raw_data.df %>% 
+emerge_avg <- hyp.df %>% 
   group_by(species, treatment) %>% 
   mutate(
     p_pents = n_pents / n_eggs,
@@ -52,10 +54,10 @@ emerge_avg <- raw_data.df %>%
     acceptance = (sum(n_wasps_m > 0 | n_wasps_f > 0)) / n(),
     )
 
-# Plot average percent egg parasitism and total mass acceptance
+# Plot total mass acceptance and average percent egg parasitism
 
 emerge_plot <- emerge_avg %>% 
-  filter(treatment %in% c("no-choice")) %>% 
+  filter(treatment %in% c("No-Choice")) %>% 
   pivot_longer(
     cols = c("acceptance", "avg_wasps"),
     names_to = "metric",
@@ -69,29 +71,30 @@ ggplot(emerge_plot, aes(y = reorder(species, proportion), proportion, fill = met
   theme_bw() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
   theme(axis.text.y = element_text(face = "italic")) +
-  scale_fill_manual(values = c("#D1C7B5", "#6C90B9"), 
-                    name = "", breaks = c("acceptance", "avg_wasps"), 
-                    labels = c("Total Mass Acceptance", "Average Egg Parasitism"))  +
+  scale_fill_manual(values = c("gray90", "black"), name = "", breaks = c("acceptance", "avg_wasps"), labels = c("Total Mass Acceptance", "Mean Egg Parasitism"))  +
   theme(panel.background = element_rect(fill = "white"),
         plot.margin = margin(1, 1, 1, 1, "cm"),
         plot.background = element_rect(
           fill = "white",
           colour = "black",
           size = 1))
+
+
 ```
 
 ```{r}
 # Plot spread of percent parasitism for each pentatomid
 
-para_spread <- raw_data.df %>% 
-  filter(treatment %in% c("no-choice")) %>% 
+emergence_spread <- hyp.df %>% 
+  filter(treatment %in% c("No-Choice")) %>% 
   mutate(
     emergence = (n_wasps_m + n_wasps_f) / n_eggs,
   ) 
 
-ggplot(para_spread, aes(emergence, species)) +
+ggplot(emergence_spread, aes(emergence, species)) +
   geom_violin() +
   geom_point()
+
 ```
 
 ```{r}
@@ -99,53 +102,60 @@ ggplot(para_spread, aes(emergence, species)) +
 
 # Convert `source`, `species` and `treatment` to factors
 
-str(raw_data.df)
-raw_data.df$source <- as.factor(raw_data.df$source)
-raw_data.df$species <- as.factor(raw_data.df$species)
-raw_data.df$treatment <- as.factor(raw_data.df$treatment)
+str(hyp.df)
+hyp.df$source <- as.factor(hyp.df$source)
+hyp.df$species <- as.factor(hyp.df$species)
+hyp.df$treatment <- as.factor(hyp.df$treatment)
+```
 
-# Filter out control obs
+```{r}
+# Build model: Compare percent egg parasitism between hypsithocus (my data) and other pentatomids tested by Charles et al
 
-no_ctrl.df <- raw_data.df %>% 
+# First filter out control obs
+
+hyp2.df <- hyp.df %>% 
   filter(treatment != "Control")
 
-# Build model: Compare percent egg parasitism between Hypsithocus (my data) and other pentatomids tested by Charles et al
-
-model_1 <- glmer(cbind(
+model1 <- glmer(cbind(
   n_wasps_m + n_wasps_f, 
   n_eggs - (n_wasps_m + n_wasps_f)) 
   ~ species + (1|source),  
-  data = no_ctrl.df, 
+  data = hyp2.df, 
   family = binomial()
   )
 
 # ANOVA
 
-Anova(model_1)
+Anova(model1)
 ```
+
 ```{r}
 # Get predicted percent parasitism means and CI to see the magnitude of differences
 
-hyp_means <- emmeans(model_1, ~ species) 
+hyp_means <- emmeans(model1, ~ species) 
 
 # Get post-hoc pairwise comparisons to see where the differences lie
 
-hyp_con <- contrast(hyp_means, method = "pairwise", adjust = "fdr")
-write.table(hyp_con, file = "hyp-conmeans.txt", sep = ",", quote = FALSE, row.names = F)
+hyp_conmeans <- contrast(hyp_means, method = "pairwise", adjust = "fdr")
+write.table(hyp_conmeans, file = "hyp-conmeans.txt", sep = ",", quote = FALSE, row.names = F)
 
 # Plot means and comparisons on the transformed scale
 
 plot(hyp_means)
-plot(hyp_con)
+plot(hyp_conmeans)
 
+```
+
+
+```{r}
 # Back transform the means and CI
 
 hyp_back <- as.data.frame(hyp_means)
 means_table <- hyp_back %>%  
   mutate(
-    BT_mean = inv.logit(emmean), 
-    BT_lower = inv.logit(asymp.LCL), 
-    BT_upper = inv.logit(asymp.UCL)) %>%  
+    BT_mean=inv.logit(emmean), 
+    BT_lower=inv.logit(asymp.LCL), 
+    BT_upper=inv.logit(asymp.UCL)) %>%  
   mutate(
     BT_lower_CI = case_when(
       BT_lower == 0 & BT_upper == 1 ~ NA_real_,
@@ -171,4 +181,5 @@ geom_point() + xlim(0,1) +
           fill = "white",
           colour = "black",
           size = 1))
+
 ```
